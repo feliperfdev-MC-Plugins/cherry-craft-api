@@ -1,6 +1,6 @@
 import 'dart:convert';
 // ignore: depend_on_referenced_packages
-import 'package:crypto/crypto.dart' show Hmac, sha512;
+import 'package:crypto/crypto.dart' show Hmac, sha384, sha512;
 
 import 'package:mysql_client/mysql_client.dart';
 import 'package:shelf/shelf.dart';
@@ -14,6 +14,7 @@ SELECT
 id,
 name,
 permission,
+logged,
 joinedAt
 FROM cherrycraft.users;
 ''');
@@ -27,6 +28,7 @@ SELECT
 id,
 name,
 permission,
+logged,
 joinedAt
 FROM cherrycraft.users u WHERE u.permission = 'ADMIN';
 ''');
@@ -42,6 +44,7 @@ SELECT
 id,
 name,
 permission,
+logged,
 joinedAt
 from cherrycraft.users u where u.name = "$name";
 ''');
@@ -63,9 +66,12 @@ from cherrycraft.users u where u.name = "$name";
 
     final key = utf8.encode(password);
     final bytes = utf8.encode('$name');
-    // TODO: Change encryptation method
-    final hashMethod = Hmac(sha512, key);
-    final encryptedPassword = hashMethod.convert(bytes).toString();
+
+    final hashMethod384 = Hmac(sha384, key);
+    final firstEncryptation = hashMethod384.convert(bytes).toString();
+    final hashMethod512 = Hmac(sha512, firstEncryptation.codeUnits);
+    final encryptedPassword = hashMethod512.convert(bytes).toString();
+
     final logged = "NOT_LOGGED";
 
     final permissionEnum = parameters['permission'];
@@ -89,45 +95,71 @@ from cherrycraft.users u where u.name = "$name";
   app.delete('/users/<id>', (Request request) async {
     final id = request.params['id'];
 
-    await sql.execute('delete from cherrycraft.USERS u where u.id = "$id";');
+    final response = await sql
+        .execute('delete from cherrycraft.USERS u where u.id = "$id";');
 
-    return Response.ok({});
+    return Response.ok(jsonEncode({"deleted": response.firstOrNull != null}));
   });
 
   app.patch('/login', (Request request) async {
-    try {
-      final query = await request.readAsString();
-      final parameters = jsonDecode(query) as Map<String, dynamic>;
+    final query = await request.readAsString();
+    final parameters = jsonDecode(query) as Map<String, dynamic>;
 
-      final name = parameters['name'];
-      final password = parameters['password'];
+    final name = parameters['name'];
+    final password = parameters['password'];
 
-      final key = utf8.encode(password);
-      final bytes = utf8.encode('$name');
-      final hashMethod = Hmac(sha512, key);
-      final encryptedPassword = hashMethod.convert(bytes).toString();
-
-      final passwordResponse = await sql.execute('''
-SELECT password FROM cherrycraft.USERS u where u.name = "$name"; 
+    final passwordResponse = await sql.execute('''
+SELECT permission, password FROM cherrycraft.USERS u where u.name = "$name"; 
 ''');
+    final response = passwordResponse.rows.map((e) => e.assoc()).first;
 
-      final passwordInDb = passwordResponse.rows
-          .map((e) => e.assoc())
-          .first['password'] as String;
+    final permission = response['permission'];
 
-      final logged = encryptedPassword == passwordInDb;
-      if (logged) {
-        await sql.execute('''
+    if (permission == 'BANNED') {
+      return Response.unauthorized(jsonEncode({
+        "logged": false,
+        "message":
+            "Você está banide do servidor! Entre em contato com o suporte caso isso seja um engano."
+      }));
+    }
+
+    final key = utf8.encode(password);
+    final bytes = utf8.encode('$name');
+
+    final hashMethod384 = Hmac(sha384, key);
+    final firstEncryptation = hashMethod384.convert(bytes).toString();
+    final hashMethod512 = Hmac(sha512, firstEncryptation.codeUnits);
+    final encryptedPassword = hashMethod512.convert(bytes).toString();
+
+    final passwordInDb = response['password'] as String;
+
+    final logged = encryptedPassword == passwordInDb;
+    if (logged) {
+      await sql.execute('''
   UPDATE cherrycraft.users u
   SET u.logged = "LOGGED"
   WHERE u.name = "$name";
   ''');
-      }
-
-      return Response.ok(jsonEncode({"logged": logged}));
-    } catch (e, stackTrace) {
-      print(stackTrace.toString());
-      return Response.ok(jsonEncode({}));
     }
+
+    return Response.ok(jsonEncode({"logged": logged}));
+  });
+
+  app.patch('/disconnect', (Request request) async {
+    final query = await request.readAsString();
+    final parameters = jsonDecode(query) as Map<String, dynamic>;
+
+    final name = parameters['name'];
+
+    final response = await sql.execute('''
+  UPDATE cherrycraft.users u
+  SET u.logged = "NOT_LOGGED"
+  WHERE u.name = "$name";
+  ''');
+
+    final logged =
+        response.rows.map((e) => e.assoc()).firstOrNull?['logged'] == 'LOGGED';
+
+    return Response.ok(jsonEncode({"logged": logged}));
   });
 }
