@@ -7,6 +7,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../utils/user_permissions.dart';
+
 void userRequests({required Router app, required MySQLConnection sql}) {
   app.get('/users', (Request request) async {
     final result = await sql.execute('''
@@ -52,8 +54,6 @@ from cherrycraft.users u where u.name = "$name";
     return Response.ok(jsonEncode(data));
   });
 
-  // final enums = ['ADMIN', 'PLAYER', 'MOD', 'BUILDER', 'DEV', 'VIP', 'BANNED'];
-
   app.post('/users', (Request request) async {
     final id = Uuid().v4();
 
@@ -74,7 +74,9 @@ from cherrycraft.users u where u.name = "$name";
 
     final logged = "NOT_LOGGED";
 
-    final permissionEnum = parameters['permission'];
+    final permissionEnum = permissions.singleWhere(
+      (e) => e.toUpperCase() == '${parameters['permission']}'.toUpperCase(),
+    );
 
     final date = DateTime.now().toIso8601String();
 
@@ -113,7 +115,9 @@ SELECT permission, password FROM cherrycraft.USERS u where u.name = "$name";
 ''');
     final response = passwordResponse.rows.map((e) => e.assoc()).first;
 
-    final permission = response['permission'];
+    final permission = permissions.singleWhere(
+      (e) => e.toUpperCase() == '${parameters['permission']}'.toUpperCase(),
+    );
 
     if (permission == 'BANNED') {
       return Response.unauthorized(jsonEncode({
@@ -161,5 +165,43 @@ SELECT permission, password FROM cherrycraft.USERS u where u.name = "$name";
         response.rows.map((e) => e.assoc()).firstOrNull?['logged'] == 'LOGGED';
 
     return Response.ok(jsonEncode({"logged": logged}));
+  });
+
+  app.patch('/promote', (Request request) async {
+    final query = await request.readAsString();
+    final parameters = jsonDecode(query) as Map<String, dynamic>;
+
+    final name = parameters['name'];
+    final permission = permissions.singleWhere(
+      (e) => e.toUpperCase() == '${parameters['permission']}'.toUpperCase(),
+    );
+
+    await sql.execute('''
+  UPDATE cherrycraft.users u
+  SET u.permission = "$permission"
+  WHERE u.name = "$name";
+  ''');
+
+    final userResponse = await sql.execute(
+      '''
+SELECT * from cherrycraft.users u
+  WHERE u.name = "$name";
+      ''',
+    );
+
+    final persona = userResponse.rows.map((e) => e.assoc()).firstOrNull;
+
+    if (persona != null) {
+      return Response.ok(jsonEncode({
+        "id": persona['id'],
+        "name": name,
+        "permission": permission,
+      }));
+    }
+    return Response.badRequest(
+        body: jsonEncode({
+      "errorMessage":
+          "Ocorreu um erro ao tentar atribuir nova permissão ao usuário $name",
+    }));
   });
 }

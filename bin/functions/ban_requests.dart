@@ -5,6 +5,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../utils/user_permissions.dart';
+
 void banRequests({required Router app, required MySQLConnection sql}) {
   app.get('/banned', (Request request) async {
     final result = await sql.execute('''
@@ -78,5 +80,42 @@ SET u.permission = "BANNED"
 WHERE u.name = "$playerName";
 ''');
     return Response.ok(response.rows.map((e) => e.assoc()).toList());
+  });
+
+  app.patch('/unban', (Request request) async {
+    final query = await request.readAsString();
+    final parameters = jsonDecode(query) as Map<String, dynamic>;
+
+    final playerName = parameters['name'];
+    final unbannedAt = DateTime.now().toIso8601String();
+
+    final lastPermission = permissions.singleWhere(
+      (e) => e.toUpperCase() == '${parameters['permission']}'.toUpperCase(),
+    );
+
+    if (lastPermission != 'BANNED') {
+      return Response.notFound(
+        jsonEncode({
+          "playerName": playerName,
+          "unbanned": false,
+          "errorMessage":
+              "Não é possível remover o banimento de um usuário que não está banido!"
+        }),
+      );
+    }
+
+    await sql.execute('''
+UPDATE
+cherrycraft.users u
+SET u.permission = "PLAYER"
+WHERE u.name = "$playerName";
+''');
+    return Response.ok(
+      jsonEncode({
+        "playerName": playerName,
+        "unbanned": true,
+        "unbannedAt": unbannedAt,
+      }),
+    );
   });
 }
