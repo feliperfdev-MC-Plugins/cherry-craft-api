@@ -10,6 +10,11 @@ abstract class Env {
   @EnviedField(varName: 'NAME')
   static const String name = _Env.name;
 
-  @EnviedField(varName: 'PASSWORD', obfuscate: true)
+  @EnviedField(
+    varName: 'PASSWORD1',
+    obfuscate: true,
+    rawString: true,
+    interpolate: false,
+  )
   static String password = _Env.password;
 }
